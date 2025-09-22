@@ -1,4 +1,4 @@
-# approval_app.py (디버깅용 최종 코드)
+# approval_app.py (최종 완성 코드)
 
 import streamlit as st
 import gspread
@@ -10,10 +10,11 @@ import time
 SCOPE = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
 CREDS_FILE = 'service_account.json'
 # 중요! 본인의 Google 스프레드시트 ID를 붙여넣으세요.
-SPREADSHEET_ID = '1cmpppdXcuh778qrmxq17X9McGQ3d6b7GXP2PTNQ7Ssk' # <<-- 이전에 확인한 ID
+SPREADSHEET_ID = '1cmpppdXcuh778qrmxq17X9McGQ3d6b7GXP2PTNQ7Ssk'
 
 @st.cache_resource
 def authorize_gspread():
+    """Google Sheets API에 인증하고 클라이언트 객체를 반환합니다."""
     try:
         creds_dict = st.secrets["gcp_service_account"]
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, SCOPE)
@@ -43,54 +44,54 @@ except Exception as e:
 if st.button("새로고침"):
     st.rerun()
 
-# --- ▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼ 디버깅 섹션 추가 ▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼ ---
-
-st.divider()
-st.header("🕵️‍♂️ 디버깅 정보")
-
-# 1. 앱이 스프레드시트에서 읽어온 원본 데이터 전체를 표시합니다.
-st.subheader("1. 스프레드시트에서 읽어온 원본 데이터 (필터링 전)")
-if df.empty:
-    st.warning("스프레드시트에서 데이터를 읽어오지 못했거나, 시트가 비어있습니다.")
-else:
-    st.dataframe(df)
-
-# 2. '상태' 열이 있는지, 데이터 타입은 무엇인지 확인합니다.
-if '상태' in df.columns:
-    st.info("'상태' 열을 찾았습니다.")
-else:
-    st.error("'상태'라는 이름의 열(Column)을 스프레드시트에서 찾을 수 없습니다. 헤더 이름을 확인해주세요!")
-
-# 3. '대기' 상태인 데이터만 필터링한 결과를 표시합니다.
-st.subheader("2. '대기' 상태로 필터링한 후의 데이터")
-pending_requests = df[df['상태'] == '대기'] if '상태' in df.columns and not df.empty else pd.DataFrame()
-st.dataframe(pending_requests)
-st.divider()
-
-# --- ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲ ---
-
-
 st.header("📋 승인 대기 목록")
 
-if pending_requests.empty:
-    st.success("승인 대기 중인 요청이 없습니다.")
+# 데이터가 비어있는 경우 처리
+if df.empty or '상태' not in df.columns:
+    st.success("요청 데이터가 없습니다.")
 else:
-    grouped_requests = pending_requests.groupby('Message ID')
-    for message_id, group_df in grouped_requests:
-        with st.container(border=True):
-            first_row = group_df.iloc[0]
-            st.subheader(f"요청 그룹 (from: {first_row['Sender']})")
-            st.caption(f"요청일시: {first_row['요청일시']}")
-            st.write("요청 내역:")
-            st.dataframe(group_df[['이름', '1차 소속', '2차 소속', '머신 ID']], hide_index=True)
-            if st.button("✅ 이 그룹 전체 승인하기", key=f"approve_{message_id}"):
-                try:
-                    row_indices_to_update = group_df.index.tolist()
-                    update_requests = [{'range': f'G{idx + 2}', 'values': [['승인']]} for idx in row_indices_to_update]
-                    if update_requests:
-                        sheet.batch_update(update_requests)
-                    st.success(f"그룹 요청을 승인했습니다!")
-                    time.sleep(1)
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"승인 처리 중 오류 발생: {e}")
+    pending_requests = df[df['상태'] == '대기']
+
+    if pending_requests.empty:
+        st.success("승인 대기 중인 요청이 없습니다.")
+    else:
+        # Message ID를 기준으로 요청들을 그룹화합니다.
+        grouped_requests = pending_requests.groupby('Message ID')
+
+        for message_id, group_df in grouped_requests:
+            # 각 그룹(배치)을 하나의 컨테이너로 묶어서 표시합니다.
+            with st.container(border=True):
+                
+                # 그룹의 공통 정보(요청자, 요청일시)를 표시합니다.
+                first_row = group_df.iloc[0]
+                st.subheader(f"요청 그룹 (from: {first_row['Sender']})")
+                st.caption(f"요청일시: {first_row['요청일시']}")
+
+                # 그룹에 포함된 사용자 목록을 표로 보여줍니다.
+                st.write("요청 내역:")
+                st.dataframe(group_df[['이름', '1차 소속', '2차 소속', '머신 ID']], hide_index=True)
+
+                # 그룹 전체를 한 번에 승인하는 버튼
+                if st.button("✅ 이 그룹 전체 승인하기", key=f"approve_{message_id}"):
+                    try:
+                        # 그룹에 속한 모든 행의 인덱스를 찾습니다.
+                        row_indices_to_update = group_df.index.tolist()
+                        
+                        update_requests = []
+                        for idx in row_indices_to_update:
+                            # gspread는 행 번호가 1부터 시작하고, 헤더가 1행을 차지하므로 +2를 해줍니다.
+                            # G열(7번째 열)의 상태를 '승인'으로 변경
+                            update_requests.append({
+                                'range': f'G{idx + 2}',
+                                'values': [['승인']],
+                            })
+                        
+                        # 여러 셀을 한 번의 요청으로 업데이트하여 효율을 높입니다.
+                        if update_requests:
+                            sheet.batch_update(update_requests)
+
+                        st.success(f"그룹 요청을 승인했습니다!")
+                        time.sleep(1)
+                        st.rerun() # 승인 후 화면을 자동으로 새로고침
+                    except Exception as e:
+                        st.error(f"승인 처리 중 오류 발생: {e}")
